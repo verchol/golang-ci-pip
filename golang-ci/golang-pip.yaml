@@ -24,7 +24,6 @@ spec:
         noCfCache: false
         resetVolume: false
       verified: true
-      context: cf_github
       contexts: []
       variables: []
 
@@ -35,7 +34,7 @@ spec:
       type: git-clone
       repo: 'codefresh-io/${{CF_REPO_NAME}}'
       revision: '${{CF_BRANCH}}'
-      git: cf_github
+      git:  github
     prepare_environment_variabels_on_hub:
       stage: prepare
       image: 'golang:alpine'
@@ -111,7 +110,7 @@ spec:
       title: validate version
       fail_fast: false
       image: codefresh/semver
-      git: cf_github
+      git:  github
       commands:
         - >
           git show origin/master:service.yaml > service.master.yaml
@@ -135,7 +134,7 @@ spec:
       stage: prepare
       title: create pr
       image: 'golang:alpine'
-      git: cf_github
+      git: github
       commands:
         - >
           apk update
@@ -190,6 +189,7 @@ spec:
       type: build
       dockerfile: Dockerfile
       image_name: 'codefresh/${{CF_REPO_NAME}}'
+      registry: my-dockerhub
       build_arguments:
         - 'VCS_COMMIT_ID=${{CF_REVISION}}'
         - 'VCS_BRANCH_NAME=${{CF_BRANCH}}'
@@ -227,8 +227,8 @@ spec:
       stage: build
       title: Pushing image to cfcr
       type: push
-      image_name: 'codefresh/${{CF_REPO_NAME}}'
-      registry: CFCR
+      image_name: 'verchol/${{CF_REPO_NAME}}'
+      registry: my-dockerhub
       candidate: '${{build}}'
       tags:
         - '${{CF_BRANCH_TAG_NORMALIZED}}'
@@ -306,7 +306,7 @@ spec:
     repo: codefresh-io/pipelines
     path: ./ci-golang.yaml
     revision: SAAS-new-release-improvments
-    context: cf_github
+    context: github
   debug:
     steps:
       push_to_codefresh_inc_gcr:
@@ -318,7 +318,7 @@ spec:
   externalResources:
     - type: git
       source: .trivyignore
-      context: cf_github
+      context: github
       destination: /tmp/.trivy/trivyignore
       isFolder: false
       repo: codefresh-io/trivy-scan
@@ -326,15 +326,15 @@ spec:
       id: 5e552909b638070efe3bc649
     - type: git
       source: scripts/ci
-      context: cf_github
+      context: github
       destination: /usr/scripts
       isFolder: true
       repo: codefresh-io/pipelines
       revision: SAAS-new-release-improvments
       id: 5e8059f5ccb325c328418679
-  runtimeEnvironment:
-    name: codefresh-inc-01/runtime-load-spotinst
-    cpu: 2500m
-    memory: 8192Mi
-    dindStorage: nullGi
+  #runtimeEnvironment:
+   # name: codefresh-inc-01/runtime-load-spotinst
+    #cpu: 2500m
+    #memory: 8192Mi
+    #dindStorage: nullGi
 
