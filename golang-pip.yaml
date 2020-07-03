@@ -1,0 +1,340 @@
+version: '1.0'
+kind: pipeline
+metadata:
+  name: codefresh-io/pipelines/ci-golang
+  project: codefresh-io/pipelines
+  projectId: 5c98d438bd5b6f40758ee4ff
+  labels:
+    tags: []
+spec:
+  triggers:
+    - name: codefresh-io/hermes_1
+      type: git
+      repo: codefresh-io/hermes
+      events:
+        - push.heads
+      pullRequestAllowForkEvents: false
+      commentRegex: /.*/gi
+      branchRegex: /^((?!master).)*$/gi
+      branchRegexInput: regex
+      provider: github
+      disabled: false
+      options:
+        noCache: false
+        noCfCache: false
+        resetVolume: false
+      verified: true
+      context: cf_github
+      contexts: []
+      variables: []
+
+  steps:
+    main_clone:
+      stage: prepare
+      title: Cloning main repository...
+      type: git-clone
+      repo: 'codefresh-io/${{CF_REPO_NAME}}'
+      revision: '${{CF_BRANCH}}'
+      git: cf_github
+    prepare_environment_variabels_on_hub:
+      stage: prepare
+      image: 'golang:alpine'
+      commands:
+        - >
+          apk update
+
+          apk add jq git
+
+          go get github.com/github/hub
+
+          export EXISTING_PR=$(hub pr list -b master -h ${CF_BRANCH} -s open -f
+          %I)
+
+          echo $EXISTING_PR
+
+          echo $CF_BRANCH
+
+          echo ${CF_BRANCH#SAAS}
+
+          echo [ -z $EXISTING_PR ]
+
+          echo [ $CF_BRANCH != ${CF_BRANCH#SAAS} ]
+
+          if [ -z $EXISTING_PR ] && [ $CF_BRANCH != ${CF_BRANCH#SAAS} ] ; then
+          cf_export createPR=true ; else echo "not creating pr"; fi;
+      when:
+        steps:
+          - name: main_clone
+            'on':
+              - success
+    prepare_environment_variabels:
+      stage: prepare
+      title: Prepare environment variables
+      image: codefresh/cli
+      commands:
+        - >-
+          export PACKAGE_VERSION=$(if [  -f VERSION ]; then cat VERSION; else yq
+          -r ".version" service.yaml; fi;)
+        - >-
+          cf_export COMPOSITION_NAME=$(echo -e $(yq -r ".composition.name"
+          service.yaml))
+        - >-
+          export NORMALIZED_BRANCH_NAME=$(echo ${{CF_BRANCH}} | sed 's/_/-/g' |
+          tr '[:upper:]' '[:lower:]')
+        - >-
+          cf_export CHRAT_FULL_SEMVER=$(if [ "$CF_BRANCH" != "master" ] ;then
+          echo "$PACKAGE_VERSION-$NORMALIZED_BRANCH_NAME"; else echo
+          "$PACKAGE_VERSION"; fi;)
+        - >-
+          export HELM_REPO_CTX=$(if [ "$CF_BRANCH" == "master" ] ; then echo
+          "chartmuseum-stable-repo"; else echo "chartmuseum-dev-repo"; fi;)
+        - echo "using HELM_REPO_CTX=$HELM_REPO_CTX"
+        - codefresh get ctx $HELM_REPO_CTX --decrypt -o yaml > helm_context.yaml
+        - >-
+          cf_export BASIC_AUTH_USER=$(yq -r ".spec.data.BASIC_AUTH_USER"
+          helm_context.yaml)
+        - >-
+          cf_export BASIC_AUTH_PASS=$(yq -r ".spec.data.BASIC_AUTH_PASS"
+          helm_context.yaml)
+        - >-
+          cf_export HELM_REPO_FULL_PATH=$(yq -r ".spec.data.HELM_REPO"
+          helm_context.yaml)/api/charts
+        - cf_export CHART_NAME=$(ls .deploy)
+        - cf_export PACKAGE_VERSION=$PACKAGE_VERSION
+      when:
+        steps:
+          - name: main_clone
+            'on':
+              - success
+    validate_version:
+      stage: prepare
+      title: validate version
+      fail_fast: false
+      image: codefresh/semver
+      git: cf_github
+      commands:
+        - >
+          git show origin/master:service.yaml > service.master.yaml
+
+          export MASTER_PACKAGE_VERSION=$( yq -r ".version" service.master.yaml)
+
+          echo $MASTER_PACKAGE_VERSION
+
+          export PACKAGE_VERSION=$(if [ -f VERSION ]; then cat VERSION; else yq
+          -r ".version" service.yaml; fi;)
+
+          echo $PACKAGE_VERSION
+
+          semver-cli greater $PACKAGE_VERSION $MASTER_PACKAGE_VERSION
+      when:
+        steps:
+          - name: prepare_environment_variabels
+            'on':
+              - success
+    create_pr:
+      stage: prepare
+      title: create pr
+      image: 'golang:alpine'
+      git: cf_github
+      commands:
+        - >
+          apk update
+
+          apk add git
+
+          go get github.com/github/hub
+
+          hub pull-request --base master --head ${{CF_BRANCH}} -m ${{CF_BRANCH}}
+          --no-edit -m "$(curl ${{PR_TEMPLATE}} )"
+      when:
+        condition:
+          all:
+            pullRequestDoesntExsits: '"${{createPR}}" == "true"'
+        steps:
+          - name: prepare_environment_variabels_on_hub
+            'on':
+              - success
+    lint:
+      stage: test
+      type: parallel
+      steps:
+        code:
+          title: Running code lint
+          image: golang
+          commands:
+            - make lint
+        api:
+          title: Running API interface lint
+          image: golang
+          commands:
+            - make api
+      when:
+        steps:
+          - name: main_clone
+            'on':
+              - success
+    unit_test:
+      stage: test
+      title: Running unit tests
+      image: golang
+      commands:
+        - make test
+      when:
+        steps:
+          - name: prepare_environment_variabels
+            'on':
+              - success
+    build:
+      stage: build
+      title: Building production image
+      type: build
+      dockerfile: Dockerfile
+      image_name: 'codefresh/${{CF_REPO_NAME}}'
+      build_arguments:
+        - 'VCS_COMMIT_ID=${{CF_REVISION}}'
+        - 'VCS_BRANCH_NAME=${{CF_BRANCH}}'
+        - 'VCS_SLUG=codefresh-io/${{CF_REPO_NAME}}'
+        - 'CI_BUILD_ID=${{CF_BUILD_ID}}'
+        - 'CI_BUILD_URL=${{CF_BUILD_URL}}'
+        - 'CODECOV_TOKEN=${{CODECOV_TOKEN}}'
+        - 'VERSION=${{PACKAGE_VERSION}}'
+      retry:
+        maxAttempts: 3
+        delay: 5
+      metadata:
+        set:
+          - TICKET_CANDIDATE: '${{CF_BRANCH}}'
+      when:
+        steps:
+          - name: main_clone
+            'on':
+              - success
+    security_scan:
+      stage: test
+      image: 'codefreshplugins/twistcli:19.03.311'
+      commands:
+        - >-
+          twistcli images scan  --address $CONSOLE_URL --user $CONSOLE_USERNAME
+          --password $CONSOLE_PASSWORD --vulnerability-threshold critical
+          --details codefresh/$CF_REPO_NAME:$CF_BRANCH
+      when:
+        steps:
+          - name: build
+            'on':
+              - success
+      fail_fast: false
+    push_to_cfcr:
+      stage: build
+      title: Pushing image to cfcr
+      type: push
+      image_name: 'codefresh/${{CF_REPO_NAME}}'
+      registry: CFCR
+      candidate: '${{build}}'
+      tags:
+        - '${{CF_BRANCH_TAG_NORMALIZED}}'
+        - '${{CF_REVISION}}'
+        - '${{CHRAT_FULL_SEMVER}}'
+      when:
+        branch:
+          ignore:
+            - master
+        steps:
+          - name: build
+            'on':
+              - success
+          - name: prepare_environment_variabels
+            'on':
+              - success
+    build_helm_package:
+      stage: build
+      image: 'codefresh/kube-helm:master'
+      commands:
+        - >-
+          yq '.imageTag = env.CHRAT_FULL_SEMVER'
+          ${{CF_VOLUME_PATH}}/${{CF_REPO_NAME}}/.deploy/${{CHART_NAME}}/values.yaml
+          --yaml-output > ${{CF_VOLUME_PATH}}/values.new.yaml
+        - >-
+          mv ${{CF_VOLUME_PATH}}/values.new.yaml
+          ${{CF_VOLUME_PATH}}/${{CF_REPO_NAME}}/.deploy/${{CHART_NAME}}/values.yaml
+        - >-
+          helm dependency update
+          ${{CF_VOLUME_PATH}}/${{CF_REPO_NAME}}/.deploy/${{CHART_NAME}}
+        - >-
+          export PACKAGE=$(helm package
+          ${{CF_VOLUME_PATH}}/${{CF_REPO_NAME}}/.deploy/${{CHART_NAME}}
+          --version ${{CHRAT_FULL_SEMVER}} --destination ${{CF_VOLUME_PATH}} |
+          cut -d " " -f 8 )
+        - >-
+          curl --user ${{BASIC_AUTH_USER}}:${{BASIC_AUTH_PASS}} --fail
+          --data-binary "@$PACKAGE" $HELM_REPO_FULL_PATH
+      when:
+        steps:
+          - name: build
+            'on':
+              - success
+  stages:
+    - prepare
+    - test
+    - build
+  variables:
+    - key: PR_TEMPLATE
+      value: >-
+        https://gist.githubusercontent.com/oren-codefresh/3b25c87ba3ff2ea764d236278dddb4c8/raw/1205225f49f4de2d14f4a777f0067a1b1c8d98d2/PULL_REQUEST_TEMPLATE.md
+      encrypted: false
+    - key: IGNORE_SEC_SCAN
+      value: 'true'
+      encrypted: false
+    - key: TRIVY_USERNAME
+      value: _json_key
+      encrypted: false
+    - key: TRIVY_PASSWORD
+      value: '*****'
+      encrypted: true
+    - key: STATUS_GITHUB_TOKEN
+      value: 5f232a8e16663edbcacae898a9b275bb3b549826
+      encrypted: false
+    - key: API_KEY
+      value: 5e5e21897f234b3c550ecd2a
+      encrypted: false
+  contexts:
+    - codecov
+    - twistlock
+    - twistlocksecrets
+    - Github-release-token
+  specTemplate:
+    location: git
+    repo: codefresh-io/pipelines
+    path: ./ci-golang.yaml
+    revision: SAAS-new-release-improvments
+    context: cf_github
+  debug:
+    steps:
+      push_to_codefresh_inc_gcr:
+        phases:
+          before: true
+          override: false
+          after: false
+  terminationPolicy: []
+  externalResources:
+    - type: git
+      source: .trivyignore
+      context: cf_github
+      destination: /tmp/.trivy/trivyignore
+      isFolder: false
+      repo: codefresh-io/trivy-scan
+      revision: master
+      id: 5e552909b638070efe3bc649
+    - type: git
+      source: scripts/ci
+      context: cf_github
+      destination: /usr/scripts
+      isFolder: true
+      repo: codefresh-io/pipelines
+      revision: SAAS-new-release-improvments
+      id: 5e8059f5ccb325c328418679
+  runtimeEnvironment:
+    name: codefresh-inc-01/runtime-load-spotinst
+    cpu: 2500m
+    memory: 8192Mi
+    dindStorage: nullGi
+
