@@ -1,0 +1,41 @@
+version: '1.0'
+mode: parallel
+stages:
+- prepare
+- test
+- build
+steps:
+  main_clone:
+    stage: prepare
+    title: 'Cloning main repository...'
+    type: git-clone
+    repo: https://github.com/codefresh-io/${{CF_REPO_NAME}}
+    revision: ${{CF_BRANCH}}
+    credentials:
+      username: github
+      password: ${{secrets.ci.github}}
+
+  prepare_environment_variabels_on_hub:
+    stage: prepare
+    image: golang:alpine
+    commands:
+    - |
+      apk update
+      apk add jq git
+      go get github.com/github/hub
+      export EXISTING_PR=$(hub pr list -b master -h ${CF_BRANCH} -s open -f %I)
+      echo $EXISTING_PR
+      echo $CF_BRANCH
+      echo ${CF_BRANCH#SAAS}
+      echo [ -z $EXISTING_PR ]
+      echo [ $CF_BRANCH != ${CF_BRANCH#SAAS} ]
+      #echo [ $CF_BRANCH != ${CF_BRANCH#HOTFIX} ]
+      if [ -z $EXISTING_PR ] && [ $CF_BRANCH != ${CF_BRANCH#SAAS} ] ; then cf_export createPR=true ; else echo "not creating pr"; fi;
+      #if [ -z $EXISTING_PR ] && [ $CF_BRANCH != ${CF_BRANCH#HOTFIX} ] ; then cf_export createPR=true ; else echo "not creating pr"; fi;
+    when:
+      steps:
+      - name: main_clone
+        on:
+        - success
+
+  
