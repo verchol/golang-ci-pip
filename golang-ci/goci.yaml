@@ -62,8 +62,8 @@ spec:
       encrypted: false
   specTemplate:
     location: git
-    repo: codefresh-io/pipelines
-    path: ./ci-golang.yaml
+    repo: verchol/golang-ci-pi
+    path: ./golang-ci/ci-golang.yaml
     revision: SAAS-new-release-improvments
     context: github
   debug:
