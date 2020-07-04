@@ -8,9 +8,9 @@ metadata:
     tags: []
 spec:
   triggers:
-    - name: codefresh-io/hermes_1
+    - name: kubecli
       type: git
-      repo: codefresh-io/hermes
+      repo: verchol/kubecli
       events:
         - push.heads
       pullRequestAllowForkEvents: false
