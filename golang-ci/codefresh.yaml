@@ -11,9 +11,7 @@ steps:
     type: git-clone
     repo: https://github.com/codefresh-io/${{CF_REPO_NAME}}
     revision: ${{CF_BRANCH}}
-    credentials:
-      username: github
-      password: ${{secrets.ci.github}}
+    git: github
 
   prepare_environment_variabels_on_hub:
     stage: prepare
