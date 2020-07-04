@@ -63,7 +63,7 @@ spec:
   specTemplate:
     location: git
     repo: verchol/golang-ci-pi
-    path: ./golang-ci/ci-golang.yaml
+    path: ./golang-ci/codefresh.yaml
     revision: SAAS-new-release-improvments
     context: github
   debug:
